@@ -42,6 +42,10 @@
 #endif
 #include "ft_motion/stepping.h"
 
+#if HAS_EXTRUDERS
+  #include "ft_motion/linear_advance.h"
+#endif
+
 #define FTM_VERSION   2   // Change version when hosts need to know
 
 #if ENABLED(FTM_DYNAMIC_FREQ)
@@ -217,6 +221,8 @@ typedef struct FTConfig {
 
     TERN_(FTM_POLYS, poly6_acceleration_overshoot = FTM_POLY6_ACCELERATION_OVERSHOOT);
   }
+  
+  float linAdvSmoothTime = FTM_LIN_ADV_SMOOTH_TIME;
 
 } ft_config_t;
 
@@ -376,7 +382,7 @@ class FTMotion {
 
     // Linear advance variables.
     #if HAS_EXTRUDERS
-      static float prev_traj_e;
+      static linear_advance_t lin_adv;
     #endif
 
     // Buffers

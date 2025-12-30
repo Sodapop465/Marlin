@@ -133,7 +133,7 @@ TrapezoidalTrajectoryGenerator FTMotion::trapezoidalGenerator;
 
 #if HAS_EXTRUDERS
   // Linear advance variables.
-  float FTMotion::prev_traj_e = 0.0f;     // (ms) Unit delay of raw extruder position.
+  linear_advance_t FTMotion::lin_adv;
 #endif
 
 // Stepping variables.
@@ -231,7 +231,7 @@ void FTMotion::reset() {
   shaping.reset();
   TERN_(FTM_SMOOTHING, smoothing.reset(););
 
-  TERN_(HAS_EXTRUDERS, prev_traj_e = 0.0f);  // Reset linear advance variables.
+  TERN_(HAS_EXTRUDERS, lin_adv.reset());  // Reset linear advance variables.
   TERN_(DISTINCT_E_FACTORS, block_extruder_axis = E_AXIS);
 
   moving_axis_flags.reset();
@@ -437,7 +437,7 @@ bool FTMotion::plan_next_block() {
     #endif
 
     // Offset linear advance previous position
-    prev_traj_e += offset;
+    lin_adv.offset_position(offset);
 
     // Offset stepper current position
     const int64_t delta_steps_q48_16 = offset * planner.settings.axis_steps_per_mm[block_extruder_axis] * (1ULL << 16);
@@ -447,22 +447,96 @@ bool FTMotion::plan_next_block() {
 #endif // HAS_EXTRUDERS
 
 xyze_float_t FTMotion::calc_traj_point(const float dist) {
-  xyze_float_t traj_coords;
-  #define _SET_TRAJ(q) traj_coords.q = startPos.q + ratio.q * dist;
-  LOGICAL_AXIS_MAP_LC(_SET_TRAJ);
-
-  #if FTM_HAS_LIN_ADVANCE
-    const float advK = planner.get_advance_k();
-    if (advK) {
-      const float traj_e = traj_coords.e;
-      if (use_advance_lead) {
-        // Don't apply LA to retract/unretract blocks
-        const float e_rate = (traj_e - prev_traj_e) * (FTM_FS);
-        traj_coords.e += e_rate * advK;
-      }
-      prev_traj_e = traj_e;
+  #if HAS_EXTRUDERS
+    // Update trajectory queue
+    // Shift Trajectory Queue
+    for (uint32_t _i = 0; _i < lin_adv.lin_adv_lookahead_steps - 1; ++_i) {
+      lin_adv.traj_queue[_i] = lin_adv.traj_queue[_i + 1];
     }
+    // Add new point to end of queue
+    #define _SET_TRAJ(q) lin_adv.traj_queue[lin_adv.lin_adv_lookahead_steps - 1].q = startPos.q + ratio.q * dist;
+    LOGICAL_AXIS_MAP_LC(_SET_TRAJ);
+    #undef _SET_TRAJ
+
+    // Set current trajectory point
+    xyze_float_t traj_coords;
+    #define _SET_TRAJ(q) traj_coords.q = lin_adv.traj_queue[0].q;
+    LOGICAL_AXIS_MAP_LC(_SET_TRAJ);
+    
+    #if FTM_HAS_LIN_ADVANCE
+      const float advK = planner.get_advance_k();
+      // Alpha is set based on variance in velocity
+      float nominal_position = lin_adv.traj_queue[lin_adv.lin_adv_lookahead_steps - 1].e;
+      float prev_raw_traj_e = lin_adv.traj_queue[lin_adv.lin_adv_lookahead_steps - 2].e;
+      float nominal_velocity = (nominal_position - prev_raw_traj_e) * (FTM_FS);      // mm/s
+      float advanced_position = nominal_position;
+      if (advK && use_advance_lead) {
+        // Don't apply LA to retract/unretract blocks
+        advanced_position = nominal_position + advK * nominal_velocity;
+      }
+      // Adaptive Chained EMA Smoothing
+      float smooth_position = advanced_position;
+      if (cfg.linAdvSmoothTime > 0.0f) {
+        float alpha = 0.0f;
+        float advanced_velocity = (advanced_position - lin_adv.prev_advanced_traj_e) * (FTM_FS);
+        if (cfg.linAdvSmoothTime > 0.01f) {
+          float dv = (advanced_velocity - lin_adv.prev_advanced_e_rate);
+          if (dv < 0.0f) {
+            dv = dv * -1.0f;
+          }
+          lin_adv.prev_volatility = 0.9f * lin_adv.prev_volatility + 0.1f * dv;
+          alpha = (1.0f + lin_adv.prev_volatility) / (10.0f * dv);
+          alpha = 1 / (10.0f * dv);
+          if (alpha > lin_adv.max_alpha) {
+            alpha = lin_adv.max_alpha;
+          } else if (alpha < 0.0f) {
+            alpha = 0.0f;
+          }
+        } else {
+          alpha = lin_adv.max_alpha;
+        }
+        // Apply smoothing
+        float smooth_val = advanced_position;
+        if (alpha > 0.0f) {
+          for (uint8_t _i = 0; _i < FTM_SMOOTHING_ORDER; ++_i) {
+            lin_adv.prev_smoothing_traj_es[_i] += (smooth_val - lin_adv.prev_smoothing_traj_es[_i]) * alpha;
+            smooth_val = lin_adv.prev_smoothing_traj_es[_i];
+            alpha = lin_adv.max_alpha;
+          }
+          smooth_position = smooth_val;
+        }
+        // Store values for next iteration
+        lin_adv.prev_advanced_e_rate = advanced_velocity;
+        lin_adv.prev_advanced_traj_e = advanced_position;
+      }
+      // Update trajectory
+      traj_coords.e = smooth_position;
+    #endif // FTM_HAS_LIN_ADVANCE
+  #endif // HAS_EXTRUDERS
+  #if !HAS_EXTRUDERS
+    xyze_float_t traj_coords;
+    #define _SET_TRAJ(q) traj_coords.q = startPos.q + ratio.q * dist;
+    LOGICAL_AXIS_MAP_LC(_SET_TRAJ);
   #endif
+
+
+  // Stuff of old
+  // xyze_float_t traj_coords;
+  // #define _SET_TRAJ(q) traj_coords.q = startPos.q + ratio.q * dist;
+  // LOGICAL_AXIS_MAP_LC(_SET_TRAJ);
+
+  // #if FTM_HAS_LIN_ADVANCE
+  //   const float advK = planner.get_advance_k();
+  //   if (advK) {
+  //     const float traj_e = traj_coords.e;
+  //     if (use_advance_lead) {
+  //       // Don't apply LA to retract/unretract blocks
+  //       const float e_rate = (traj_e - prev_traj_e) * (FTM_FS);
+  //       traj_coords.e += e_rate * advK;
+  //     }
+  //     prev_traj_e = traj_e;
+  //   }
+  // #endif
 
   // Update shaping parameters if needed.
   switch (cfg.dynFreqMode) {
