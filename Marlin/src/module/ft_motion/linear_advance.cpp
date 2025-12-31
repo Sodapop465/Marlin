@@ -8,7 +8,7 @@ void LinearAdvance::reset() {
         prev_smoothing_traj_es[i] = 0.0f;
     }
     for (uint32_t i = 0; i < lin_adv_lookahead_steps; i++) {
-        traj_queue[i] = { 0.0f };
+        traj_queue[i].reset();
     }
 }
 
