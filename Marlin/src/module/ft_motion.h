@@ -42,7 +42,7 @@
 #endif
 #include "ft_motion/stepping.h"
 
-#if HAS_EXTRUDERS
+#if FTM_HAS_LIN_ADVANCE
   #include "ft_motion/linear_advance.h"
 #endif
 
@@ -369,7 +369,7 @@ class FTMotion {
     #endif
 
     // Linear advance variables.
-    #if HAS_EXTRUDERS
+    #if FTM_HAS_LIN_ADVANCE
       static linear_advance_t lin_adv;
     #endif
 
@@ -394,6 +394,7 @@ class FTMotion {
       // parameters force input shaping to look in a past position for echoes.
       shaping.fill(endPos_prevBlock);
       TERN_(FTM_SMOOTHING, smoothing.fill(endPos_prevBlock));
+      TERN_(FTM_HAS_LIN_ADVANCE, lin_adv.fill_smoothing_buffer(endPos_prevBlock));
       fastForwardUntilMotion = true;
     }
 

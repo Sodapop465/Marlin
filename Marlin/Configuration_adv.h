@@ -1171,14 +1171,14 @@
   #endif
 
   // Disable unused shapers if you need more free space
-  // #define FTM_SHAPER_ZV    // Sodapop465
-  // #define FTM_SHAPER_ZVD   // Sodapop465
-  // #define FTM_SHAPER_ZVDD  // Sodapop465
-  // #define FTM_SHAPER_ZVDDD // Sodapop465
+  #define FTM_SHAPER_ZV
+  #define FTM_SHAPER_ZVD
+  #define FTM_SHAPER_ZVDD
+  #define FTM_SHAPER_ZVDDD
   #define FTM_SHAPER_EI
-  // #define FTM_SHAPER_2HEI  // Sodapop465
-  // #define FTM_SHAPER_3HEI  // Sodapop465
-  // #define FTM_SHAPER_MZV   // Sodapop465
+  #define FTM_SHAPER_2HEI
+  #define FTM_SHAPER_3HEI
+  #define FTM_SHAPER_MZV
 
   #define FTM_DEFAULT_SHAPER_X      ftMotionShaper_EI // Default shaper mode on X axis (NONE, ZV, ZVD, ZVDD, ZVDDD, EI, 2HEI, 3HEI, MZV)  // Sodapop465, default was NONE
   #define FTM_SHAPING_DEFAULT_FREQ_X   39.5f    // (Hz) Default peak frequency used by input shapers  // Sodapop465
@@ -1205,7 +1205,7 @@
 
   //#define FTM_RESONANCE_TEST                  // Sine sweep motion for resonance study
 
-  //#define FTM_SMOOTHING                       // Smoothing can reduce artifacts and make steppers quieter
+  #define FTM_SMOOTHING                       // Smoothing can reduce artifacts and make steppers quieter
                                                 // on sharp corners, but too much will round corners.
   #if ENABLED(FTM_SMOOTHING)
     #define FTM_MAX_SMOOTHING_TIME      0.10f   // (s) Maximum smoothing time. Higher values consume more RAM.
