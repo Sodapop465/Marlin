@@ -497,7 +497,6 @@ xyze_float_t FTMotion::calc_traj_point(const float dist) {
         }
         lin_adv.prev_volatility = 0.9f * lin_adv.prev_volatility + 0.1f * dv;
         alpha = (1.0f + lin_adv.prev_volatility) / (10.0f * dv);
-        alpha = 1 / (10.0f * dv);
         if (alpha > lin_adv.max_alpha) {
           alpha = lin_adv.max_alpha;
         } else if (alpha < 0.0f) {

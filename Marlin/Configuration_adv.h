@@ -1163,7 +1163,7 @@
     //#define FTM_HOME_AND_PROBE                // Use FT Motion for homing / probing. Disable if FT Motion breaks these functions.
   #endif
 
-  #define FTM_LIN_ADV_SMOOTH_TIME        0.05f   // (s) Smoothing time for linear advance. Zero means disabled.
+  #define FTM_LIN_ADV_SMOOTH_TIME        0.06f   // (s) Smoothing time for linear advance. Zero means no smoothing.
 
   //#define FTM_DYNAMIC_FREQ                    // Enable for linear adjustment of XY shaping frequency according to Z or E
   #if ENABLED(FTM_DYNAMIC_FREQ)
