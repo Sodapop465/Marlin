@@ -49,6 +49,13 @@ constexpr uint32_t FP_FLOOR_MASK = ~(ONE_FP - 1);         // Bit mask to do FLOO
 constexpr uint32_t FRAME_TICKS_FP = FRAME_TICKS << FTM_Q; // Ticks in a frame in fixed point
 constexpr uint32_t FTM_NEVER = FRAME_TICKS_FP + 1;        // Reserved number to indicate "no ticks in this frame", also max isr wait on empty stepper buffer
 
+// Step+Direction+Step Filter
+#if HAS_TRINAMIC_STANDALONE
+  constexpr float SDS_FILTER_TIME = 0.000500f; // seconds
+  constexpr uint32_t SDS_FILTER_TICKS = SDS_FILTER_TIME * STEPPER_TIMER_RATE; // Ticks to wait after a direction change before stepping
+  constexpr uint32_t SDS_FILTER_TICKS_FP = SDS_FILTER_TICKS << FTM_Q; // Ticks in fixed point format
+#endif
+
 // Sanity check
 static_assert(FRAME_TICKS < FTM_NEVER, "(STEPPER_TIMER_RATE / FTM_FS) (" STRINGIFY(STEPPER_TIMER_RATE) " / " STRINGIFY(FTM_FS) ") must be < " STRINGIFY(FTM_NEVER) " to fit 16-bit fixed-point numbers.");
 static_assert(POW(2, 16 - FTM_Q) > FRAME_TICKS, "FRAME_TICKS in Q format should fit in a uint16");
@@ -69,6 +76,12 @@ typedef struct Stepping {
 
   AxisBits dir_bits;
   AxisBits step_bits;
+
+  // SDS Filter
+  #if HAS_TRINAMIC_STANDALONE
+    AxisBits prev_dir_bits = 0;
+    xyze_ulong_t ticks_since_prev_step_fp{ LOGICAL_AXIS_LIST_1(0) };
+  #endif
 
   xyze_ulong_t axis_interval_fp{ LOGICAL_AXIS_LIST_1(FTM_NEVER) };
   xyze_ulong_t ticks_left_per_axis_fp{ LOGICAL_AXIS_LIST_1(FTM_NEVER) };
@@ -98,6 +111,9 @@ typedef struct Stepping {
         const uint32_t wait_floor_fp = ticks_left_in_frame_fp & FP_FLOOR_MASK;
         ticks_to_wait_fp += wait_floor_fp;
         ticks_left_in_frame_fp -= wait_floor_fp;
+        #if HAS_TRINAMIC_STANDALONE
+          ticks_since_prev_step_fp += wait_floor_fp;
+        #endif
 
         //
         // Pull the next plan – it already contains:
@@ -106,6 +122,9 @@ typedef struct Stepping {
         //  - interval_fp       (repeating step period)
         //
         const stepper_plan_t next = dequeue();
+        #if HAS_TRINAMIC_STANDALONE
+          prev_dir_bits    = dir_bits;
+        #endif
         dir_bits         = next.dir_bits;
         axis_interval_fp = next.interval_fp.asUInt32();
 
@@ -122,17 +141,39 @@ typedef struct Stepping {
         ticks_to_wait_fp += wait_floor_fp;
         ticks_left_in_frame_fp -= wait_floor_fp;
         ticks_left_per_axis_fp -= wait_floor_fp;
+        #if HAS_TRINAMIC_STANDALONE
+          ticks_since_prev_step_fp += wait_floor_fp;
+        #endif
 
         // Build step_bits: any axis whose counter < ONE_FP should step before the next tick, so we tick now
         // unless the frame ends earlier.
         uint32_t limit_fp = _MIN(ONE_FP - 1, ticks_left_in_frame_fp);
+        #if HAS_TRINAMIC_STANDALONE
+          // SDS Filter
+          uint32_t sds_wait_fp = 0;
+        #endif
         auto _set_step_bit = [&](const AxisEnum A) __attribute__((always_inline)) {
           if (ticks_left_per_axis_fp[A] <= limit_fp) {
+            #if HAS_TRINAMIC_STANDALONE
+              // If step+direction+step occur too close, delay the step to prevent overcurrent protection on TMC2208
+              if (prev_dir_bits[A] != dir_bits[A]) {
+                if (ticks_since_prev_step_fp[A] < SDS_FILTER_TICKS_FP) {
+                  const uint32_t extra_wait_fp = SDS_FILTER_TICKS_FP - ticks_since_prev_step_fp[A];
+                  sds_wait_fp = _MAX(sds_wait_fp, extra_wait_fp);
+                }
+              }
+            #endif
             step_bits[A] = 1;
             ticks_left_per_axis_fp[A] += axis_interval_fp[A];
+            ticks_since_prev_step_fp[A] = 0;
           }
         };
         LOGICAL_AXIS_CALL(_set_step_bit);
+
+        #if HAS_TRINAMIC_STANDALONE
+          // Apply SDS wait if needed
+          ticks_to_wait_fp += sds_wait_fp;
+        #endif
 
         return ticks_to_wait_fp >> FTM_Q;   // Convert fixed point back to whole ticks
       }
@@ -144,6 +185,11 @@ typedef struct Stepping {
     axis_interval_fp = FTM_NEVER;
     ticks_left_per_axis_fp = FTM_NEVER;
     ticks_left_in_frame_fp = 0;
+
+    // IDK if this is needed, but just in case
+    #if HAS_TRINAMIC_STANDALONE
+      prev_dir_bits = dir_bits;
+    #endif
 
     stepper_plan_tail = stepper_plan_head = 0;
     curr_steps_q48_16.reset();
