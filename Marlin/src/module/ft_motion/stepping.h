@@ -49,6 +49,14 @@ constexpr uint32_t FP_FLOOR_MASK = ~(ONE_FP - 1);         // Bit mask to do FLOO
 constexpr uint32_t FRAME_TICKS_FP = FRAME_TICKS << FTM_Q; // Ticks in a frame in fixed point
 constexpr uint32_t FTM_NEVER = FRAME_TICKS_FP + 1;        // Reserved number to indicate "no ticks in this frame", also max isr wait on empty stepper buffer
 
+// Step+Direction+Step (SDS) filter (prevents rapid step+direction+step sequences that can shutdown TMC2208 in standalone mode)
+#if HAS_TRINAMIC_STANDALONE
+  constexpr float SDS_FILTER_TIME = 0.000750f; // seconds
+  constexpr uint32_t SDS_FILTER_TICKS = uint32_t(SDS_FILTER_TIME * STEPPER_TIMER_RATE);
+  constexpr uint32_t SDS_FILTER_TICKS_FP = SDS_FILTER_TICKS << FTM_Q; // Time to wait after a direction change before stepping in fixed point
+#endif
+
+
 // Sanity check
 static_assert(FRAME_TICKS < FTM_NEVER, "(STEPPER_TIMER_RATE / FTM_FS) (" STRINGIFY(STEPPER_TIMER_RATE) " / " STRINGIFY(FTM_FS) ") must be < " STRINGIFY(FTM_NEVER) " to fit 16-bit fixed-point numbers.");
 static_assert(POW(2, 16 - FTM_Q) > FRAME_TICKS, "FRAME_TICKS in Q format should fit in a uint16");
@@ -159,6 +167,11 @@ typedef struct Stepping {
   uint32_t stepper_plan_tail = 0, stepper_plan_head = 0;
   XYZEval<int64_t> curr_steps_q48_16{0};
 
+  // SDS Filter
+  #if HAS_TRINAMIC_STANDALONE
+    AxisBits prev_dir;
+  #endif
+
   FORCE_INLINE void enqueue(XYZEval<int64_t> next_steps_q48_16) {
 
     stepper_plan_t stepper_plan;
@@ -179,7 +192,7 @@ typedef struct Stepping {
 
       // Current / next phase (fractional part of the position)
       uint32_t curr_phase_q1_16 = offset_curr_q48_16 & 0xFFFF,
-               next_phase_q1_16 = offset_next_q48_16 & 0xFFFF;
+                next_phase_q1_16 = offset_next_q48_16 & 0xFFFF;
       if (!new_dir) {
         // When going backwards, the phase is 1-phase
         curr_phase_q1_16 = (1UL<<16) - curr_phase_q1_16;
@@ -202,7 +215,7 @@ typedef struct Stepping {
       //   interval = ticks_per_frame / delta
       //   current_frame_phase_fp = interval * curr_phase
       const uint32_t interval_fp = (FRAME_TICKS_FP << 16) / delta_q16_16,
-                     current_frame_phase_fp = a_times_b_shift_16(interval_fp, curr_phase_q1_16);
+                      current_frame_phase_fp = a_times_b_shift_16(interval_fp, curr_phase_q1_16);
       uint32_t first_interval_fp = interval_fp - current_frame_phase_fp;
 
       // The calculation of interval_fp may undershoot its value by a fraction
@@ -214,6 +227,20 @@ typedef struct Stepping {
       if (tick_of_spurious_step_fp <= FRAME_TICKS_FP) {
         first_interval_fp += FRAME_TICKS_FP - tick_of_spurious_step_fp + 1;
       }
+
+      // SDS Filter
+      // If direction is going to change, ensure direction change signal doesn't occur too close to the previous step
+      // This can trip the overcurrent protection on the TMC2208 and similar drivers
+      #if HAS_TRINAMIC_STANDALONE
+        // Ensure first step is delayed enough after a direction change
+        if (prev_dir[A] != new_dir && first_interval_fp < SDS_FILTER_TICKS_FP) {
+          const int64_t extra_delay_fp = SDS_FILTER_TICKS_FP - first_interval_fp;
+          if (extra_delay_fp > 0) {
+            first_interval_fp += extra_delay_fp;
+          }
+        }
+        prev_dir[A] = new_dir;
+      #endif
 
       stepper_plan.first_interval_fp[A] = _MIN(first_interval_fp, FTM_NEVER);
       stepper_plan.interval_fp[A]       = _MIN(interval_fp, FTM_NEVER);
