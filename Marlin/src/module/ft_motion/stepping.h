@@ -169,11 +169,10 @@ typedef struct Stepping {
 
   // SDS Filter
   #if HAS_TRINAMIC_STANDALONE
-    AxisBits prev_dir;
+    AxisBits prev_dir = 0;
   #endif
 
   FORCE_INLINE void enqueue(XYZEval<int64_t> next_steps_q48_16) {
-
     stepper_plan_t stepper_plan;
     constexpr uint32_t HALF_PHASE_OFFSET = (1UL << 15); // to make steps at .5 crossings instead of integers to center the error
 
@@ -183,7 +182,7 @@ typedef struct Stepping {
                     offset_next_q48_16 = next_steps_q48_16[A] + HALF_PHASE_OFFSET;
       curr_steps_q48_16[A] = next_steps_q48_16[A];
 
-      // Determine direction change
+      // Determine direction
       const bool new_dir = offset_next_q48_16 >= offset_curr_q48_16;
       stepper_plan.dir_bits[A] = new_dir;
 
@@ -214,7 +213,7 @@ typedef struct Stepping {
       // Compute the exact time between steps.
       //   interval = ticks_per_frame / delta
       //   current_frame_phase_fp = interval * curr_phase
-      const uint32_t interval_fp = (FRAME_TICKS_FP << 16) / delta_q16_16,
+      uint32_t interval_fp = (FRAME_TICKS_FP << 16) / delta_q16_16,
                       current_frame_phase_fp = a_times_b_shift_16(interval_fp, curr_phase_q1_16);
       uint32_t first_interval_fp = interval_fp - current_frame_phase_fp;
 
@@ -234,9 +233,13 @@ typedef struct Stepping {
       #if HAS_TRINAMIC_STANDALONE
         // Ensure first step is delayed enough after a direction change
         if (prev_dir[A] != new_dir && first_interval_fp < SDS_FILTER_TICKS_FP) {
-          const int64_t extra_delay_fp = SDS_FILTER_TICKS_FP - first_interval_fp;
-          if (extra_delay_fp > 0) {
-            first_interval_fp += extra_delay_fp;
+          const uint32_t extra_delay_fp = SDS_FILTER_TICKS_FP - first_interval_fp;
+          first_interval_fp += extra_delay_fp;
+          // Delay may cause subsequent steps to go out of frame, so shorten interval accordingly
+          const uint32_t ticks_final_step_fp = first_interval_fp + interval_fp * (steps_to_make - 1); // tick of final step in frame
+          if (ticks_final_step_fp > FRAME_TICKS_FP && steps_to_make > 1 && first_interval_fp < FRAME_TICKS_FP) {
+            const uint32_t reduced_frame_ticks_fp = FRAME_TICKS_FP - first_interval_fp;
+            interval_fp = reduced_frame_ticks_fp / (steps_to_make - 1);
           }
         }
         prev_dir[A] = new_dir;
