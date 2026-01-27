@@ -3696,6 +3696,8 @@
 #if ENABLED(FT_MOTION)
   #define FTM_TS (1.0f / FTM_FS)  // (s) Time step for trajectory generation. (Reciprocal of FTM_FS)
   #define FTM_SMOOTHING_ORDER   5 // 3 to 5 is closest to Gaussian
+  #define FTM_LIN_ADV_SMOOTHING_ORDER 5
+  #define FTM_LIN_ADV_DELAY_STEPS ((uint32_t)(FTM_LIN_ADV_SMOOTH_TIME * FTM_FS))  // Number of lookahead steps for linear advance
   #ifndef FTM_BUFFER_SIZE
     #define FTM_BUFFER_SIZE 128
   #endif
