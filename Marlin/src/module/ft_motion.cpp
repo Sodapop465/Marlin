@@ -75,6 +75,10 @@ xyze_pos_t   FTMotion::startPos,                    // (mm) Start position of bl
 xyze_float_t FTMotion::ratio;                       // (ratio) Axis move ratio of block
 float FTMotion::tau = 0.0f;                         // (s) Time since start of block
 bool FTMotion::fastForwardUntilMotion = false;      // Fast forward time if there is no motion
+#if HAS_FTM_DIR_CHANGE_HOLD
+  xyze_uint_t FTMotion::hold_frames;                // Briefly hold motion after direction changes to fix TMC2208 bug
+  AxisBits FTMotion::last_traj_dir;                 // Direction of the last trajectory point after shaping, smoothing, ...
+#endif
 
 // Trajectory generators
 TrapezoidalTrajectoryGenerator FTMotion::trapezoidalGenerator;
@@ -245,7 +249,11 @@ void FTMotion::reset() {
   TERN_(DISTINCT_E_FACTORS, block_extruder_axis = E_AXIS);
 
   moving_axis_flags.reset();
-
+  last_target_traj.reset();
+  #if HAS_FTM_DIR_CHANGE_HOLD
+    last_traj_dir.reset();
+    hold_frames.reset();
+  #endif
   if (did_suspend) stepper.wake_up();
 }
 
@@ -377,7 +385,7 @@ bool FTMotion::plan_next_block() {
       if (current_block->is_sync_pos()) stepper._set_position(current_block->position);
       continue;
     }
-    ensure_float_precision();
+    ensure_extruder_float_precision();
 
     #if ENABLED(POWER_LOSS_RECOVERY)
       recovery.info.sdpos = current_block->sdpos;
@@ -417,7 +425,7 @@ bool FTMotion::plan_next_block() {
     TERN_(FTM_HAS_LIN_ADVANCE, use_advance_lead = current_block->use_advance_lead);
 
     axis_move_dir = current_block->direction_bits;
-    #define _SET_MOVE_END(A) moving_axis_flags.A = moveDist.A ? true : false;
+    #define _SET_MOVE_END(A) moving_axis_flags.A = bool(moveDist.A);
 
     LOGICAL_AXIS_MAP(_SET_MOVE_END);
 
@@ -438,7 +446,7 @@ bool FTMotion::plan_next_block() {
    * resolution = 2^(floor(log2(|x|)) - 23)
    * By resetting at ±1'000mm (1 meter), we get a minimum resolution of ~ 0.00006mm, enough for smoothing to work well.
    */
-  void FTMotion::ensure_float_precision() {
+  void FTMotion::ensure_extruder_float_precision() {
     constexpr float FTM_POSITION_WRAP_THRESHOLD = 1000; // (mm) Reset when position exceeds this to prevent floating point precision loss
     if (ABS(endPos_prevBlock.E) < FTM_POSITION_WRAP_THRESHOLD) return;
 
@@ -458,6 +466,9 @@ bool FTMotion::plan_next_block() {
 
     // Offset linear advance previous positions
     lin_adv.offset_position(offset);
+
+    // Make sure the difference is accounted-for in the past
+    last_target_traj.e += offset;
 
     // Offset stepper current position
     const int64_t delta_steps_q48_16 = offset * planner.settings.axis_steps_per_mm[block_extruder_axis] * (1ULL << 16);
@@ -525,11 +536,27 @@ xyze_float_t FTMotion::calc_traj_point(const float dist) {
 
     // Add delay
     max_total_delay += lin_adv.delay_steps;
+    
+    // Nonlinear extrusion support
+    #if ENABLED(NONLINEAR_EXTRUSION)
+      if (stepper.ne.settings.enabled) {
+        const nonlinear_coeff_t &coeff = stepper.ne.settings.coeff;
+        const float multiplier = max(coeff.C, coeff.A * sq(e_rate) + coeff.B * e_rate + coeff.C),
+                    nle_term = traj_e_delta * (multiplier - 1);
+
+        traj_coords.e += nle_term;
+        traj_e += nle_term;
+        startPos.e += nle_term;
+        endPos_prevBlock.e += nle_term;
+      }
+    #endif
   #endif // FTM_HAS_LIN_ADVANCE
 
   // Update shaping parameters if needed.
   switch (cfg.dynFreqMode) {
+
     #if HAS_DYNAMIC_FREQ_MM
+
       case dynFreqMode_Z_BASED: {
         static float oldz = 0.0f;
         const float z = traj_coords.z;
@@ -546,9 +573,11 @@ xyze_float_t FTMotion::calc_traj_point(const float dist) {
           shaping.refresh_largest_delay_samples();
         }
       } break;
+
     #endif
 
     #if HAS_DYNAMIC_FREQ_G
+
       case dynFreqMode_MASS_BASED:
         // Update constantly. The optimization done for Z value makes
         // less sense for E, as E is expected to constantly change.
@@ -560,6 +589,7 @@ xyze_float_t FTMotion::calc_traj_point(const float dist) {
         #endif
         shaping.refresh_largest_delay_samples();
         break;
+
     #endif
 
     default: break;
@@ -633,7 +663,7 @@ void FTMotion::fill_stepper_plan_buffer() {
     float total_duration = currentGenerator->getTotalDuration(); // If the current plan is empty, it will have zero duration.
     while (tau + FTM_TS > total_duration) {
       /**
-       * We’ve reached the end of the current block.
+       * We've reached the end of the current block.
        *
        * `tau` is the time that has elapsed inside this block. After a block is finished, the next one may
        * start at any point between *just before* the last sampled time (one step earlier, i.e. `-FTM_TS`)
@@ -642,7 +672,7 @@ void FTMotion::fill_stepper_plan_buffer() {
        *
        * To account for that uncertainty we simply subtract the duration of the finished block from `tau`.
        * This brings us back to a time value that is valid for the next block, while still allowing the next
-       * block’s start to be offset by up to one time step into the past.
+       * block's start to be offset by up to one time step into the past.
        */
       tau -= total_duration;
       const bool plan_available = plan_next_block();
@@ -659,7 +689,38 @@ void FTMotion::fill_stepper_plan_buffer() {
       // It eliminates idle time when changing smoothing time or shapers and speeds up homing and bed leveling.
     }
     else {
+
+      #if HAS_FTM_DIR_CHANGE_HOLD
+
+        // When a flip is detected (and the axis is in stealthChop or is standalone),
+        // hold that axis' trajectory coordinate constant for at least 750µs.
+
+        #define DIR_FLIP_HOLD_S 0.000'750f
+        static constexpr uint32_t dir_flip_hold_frames = 1 + (DIR_FLIP_HOLD_S) / (FTM_TS);
+
+        auto start_hold_if_dir_flip = [&](const AxisEnum a) {
+          const bool dir = traj_coords[a] > last_target_traj[a],
+                     moved = traj_coords[a] != last_target_traj[a],
+                     flipped = moved && (dir != last_traj_dir[a]),
+                     hold = !moved || (flipped && hold_frames[a] > 0);
+          if (hold) {
+            if (hold_frames[a]) hold_frames[a]--;
+            traj_coords[a] = last_target_traj[a];
+          }
+          else {
+            last_traj_dir[a] = dir;
+            hold_frames[a] = dir_flip_hold_frames;
+          }
+        };
+
+        #define START_HOLD_IF_DIR_FLIP(A) TERN_(FTM_DIR_CHANGE_HOLD_##A, start_hold_if_dir_flip(_AXIS(A)));
+
+        LOGICAL_AXIS_MAP(START_HOLD_IF_DIR_FLIP);
+
+      #endif // HAS_FTM_DIR_CHANGE_HOLD
+
       fastForwardUntilMotion = false;
+
       // Calculate and store stepper plan in buffer
       stepping_enqueue(traj_coords);
     }
