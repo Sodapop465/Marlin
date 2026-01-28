@@ -58,10 +58,10 @@ constexpr uint32_t FTM_NEVER = FRAME_TICKS_FP + 1;        // Reserved number to 
   constexpr uint32_t SDS_FINAL_DELAY_TICKS_FP = uint32_t(SDS_DELAY_TICKS - (SDS_DELAY_FRAMES - 1) * FRAME_TICKS) << FTM_Q; // Ticks to wait after a direction change on the final delayed frame in fixed point
   constexpr bool axis_has_sds(const AxisEnum A) {
     switch (A) {
-      case X_AXIS: return FTM_DIR_CHANGE_HOLD_X;
-      case Y_AXIS: return FTM_DIR_CHANGE_HOLD_Y;
-      case Z_AXIS: return FTM_DIR_CHANGE_HOLD_Z;
-      case E_AXIS: return FTM_DIR_CHANGE_HOLD_E;
+      case X_AXIS: return ENABLED(FTM_DIR_CHANGE_HOLD_X);
+      case Y_AXIS: return ENABLED(FTM_DIR_CHANGE_HOLD_Y);
+      case Z_AXIS: return ENABLED(FTM_DIR_CHANGE_HOLD_Z);
+      case E_AXIS: return ENABLED(FTM_DIR_CHANGE_HOLD_E);
       default:     return false;
   }
 }
