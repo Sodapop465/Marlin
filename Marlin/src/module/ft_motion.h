@@ -42,6 +42,10 @@
 #endif
 #include "ft_motion/stepping.h"
 
+#if FTM_HAS_LIN_ADVANCE
+  #include "ft_motion/linear_advance.h"
+#endif
+
 #define FTM_VERSION   2   // Change version when hosts need to know
 
 #if ENABLED(FTM_DYNAMIC_FREQ)
@@ -230,6 +234,8 @@ typedef struct FTConfig {
 
     update_shaping_params();
   }
+  
+  float linAdvSmoothTime = FTM_LIN_ADV_SMOOTH_TIME;
 
 } ft_config_t;
 
@@ -368,8 +374,8 @@ class FTMotion {
     #endif
 
     // Linear advance variables.
-    #if HAS_EXTRUDERS
-      static float prev_traj_e;
+    #if FTM_HAS_LIN_ADVANCE
+      static linear_advance_t lin_adv;
     #endif
 
     #if HAS_FTM_SHAPING
@@ -393,6 +399,7 @@ class FTMotion {
       // parameters force input shaping to look in a past position for echoes.
       shaping.fill(endPos_prevBlock);
       TERN_(FTM_SMOOTHING, smoothing.fill(endPos_prevBlock));
+      TERN_(FTM_HAS_LIN_ADVANCE, lin_adv.fill_smoothing_buffer(endPos_prevBlock));
       fastForwardUntilMotion = true;
     }
 

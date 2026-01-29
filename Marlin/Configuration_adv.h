@@ -1163,6 +1163,8 @@
     //#define FTM_HOME_AND_PROBE                // Use FT Motion for homing / probing. Disable if FT Motion breaks these functions.
   #endif
 
+  #define FTM_LIN_ADV_SMOOTH_TIME        0.04f   // (s) Smoothing time for linear advance. Zero means no smoothing.
+
   //#define FTM_DYNAMIC_FREQ                    // Enable for linear adjustment of XY shaping frequency according to Z or E
   #if ENABLED(FTM_DYNAMIC_FREQ)
     #define FTM_DEFAULT_DYNFREQ_MODE dynFreqMode_DISABLED // Default mode of dynamic frequency calculation. (DISABLED, Z_BASED, MASS_BASED)
@@ -1203,7 +1205,7 @@
 
   //#define FTM_RESONANCE_TEST                  // Sine sweep motion for resonance study
 
-  #define FTM_SMOOTHING                       // Smoothing can reduce artifacts and make steppers quieter
+  // #define FTM_SMOOTHING                       // Smoothing can reduce artifacts and make steppers quieter
                                                 // on sharp corners, but too much will round corners.
   #if ENABLED(FTM_SMOOTHING)
     #define FTM_MAX_SMOOTHING_TIME      0.10f   // (s) Maximum smoothing time. Higher values consume more RAM.

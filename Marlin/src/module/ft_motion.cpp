@@ -138,7 +138,7 @@ TrapezoidalTrajectoryGenerator FTMotion::trapezoidalGenerator;
 
 #if HAS_EXTRUDERS
   // Linear advance variables.
-  float FTMotion::prev_traj_e = 0.0f;     // (ms) Unit delay of raw extruder position.
+  linear_advance_t FTMotion::lin_adv;
 #endif
 
 // Stepping variables.
@@ -241,7 +241,7 @@ void FTMotion::reset() {
   fastForwardUntilMotion = true;
   TERN_(FTM_SMOOTHING, smoothing.reset(););
 
-  TERN_(HAS_EXTRUDERS, prev_traj_e = 0.0f);  // Reset linear advance variables.
+  TERN_(FTM_HAS_LIN_ADVANCE, lin_adv.reset());  // Reset linear advance variables.
   TERN_(DISTINCT_E_FACTORS, block_extruder_axis = E_AXIS);
 
   moving_axis_flags.reset();
@@ -278,6 +278,11 @@ uint32_t FTMotion::calc_runout_samples() {
     SHAPED_MAP(_DELAY_ADD)
     #undef _DELAY_ADD
   #endif
+
+  #if FTM_HAS_LIN_ADVANCE
+    delay.e += lin_adv.delay_steps;
+  #endif
+
   return delay.large();
 }
 
@@ -451,8 +456,8 @@ bool FTMotion::plan_next_block() {
       for (uint8_t i = 0; i < FTM_SMOOTHING_ORDER; ++i) smoothing.E.smoothing_pass[i] += offset;
     #endif
 
-    // Offset linear advance previous position
-    prev_traj_e += offset;
+    // Offset linear advance previous positions
+    lin_adv.offset_position(offset);
 
     // Make sure the difference is accounted-for in the past
     last_target_traj.e += offset;
@@ -469,36 +474,74 @@ xyze_float_t FTMotion::calc_traj_point(const float dist) {
   #define _SET_TRAJ(q) traj_coords.q = startPos.q + ratio.q * dist;
   LOGICAL_AXIS_MAP_LC(_SET_TRAJ);
 
+  #if ANY(FTM_SMOOTHING, HAS_FTM_SHAPING, FTM_HAS_LIN_ADVANCE)
+    uint32_t max_total_delay = 0;
+  #endif
+
   #if FTM_HAS_LIN_ADVANCE
-
-    // Apply LA/NLE only to printing (not retract/unretract) blocks
-
-    if (use_advance_lead) {
-      const float advK = planner.get_advance_k();
-      if (advK || TERN0(NONLINEAR_EXTRUSION, stepper.ne.settings.enabled)) {
-        float traj_e = traj_coords.e;
-        const float traj_e_delta = traj_e - prev_traj_e; // extruder delta in mm, always positive for use_advance_lead (printing moves)
-        const float e_rate = traj_e_delta * FTM_FS;      // extruder velocity in mm/s
-
-        traj_coords.e += e_rate * advK;
-
-        #if ENABLED(NONLINEAR_EXTRUSION)
-          if (stepper.ne.settings.enabled) {
-            const nonlinear_coeff_t &coeff = stepper.ne.settings.coeff;
-            const float multiplier = max(coeff.C, coeff.A * sq(e_rate) + coeff.B * e_rate + coeff.C),
-                        nle_term = traj_e_delta * (multiplier - 1);
-
-            traj_coords.e += nle_term;
-            traj_e += nle_term;
-            startPos.e += nle_term;
-            endPos_prevBlock.e += nle_term;
-          }
-        #endif
-
-        prev_traj_e = traj_e;
-      }
+    const float advK = planner.get_advance_k();
+    // Alpha is set based on variance in velocity
+    float nominal_position = traj_coords.e;
+    float nominal_velocity = (nominal_position - lin_adv.prev_raw_traj_e) * (FTM_FS);      // mm/s
+    float advanced_position = nominal_position;
+    if (advK && use_advance_lead) {
+      // Don't apply LA to retract/unretract blocks
+      advanced_position = nominal_position + advK * nominal_velocity;
     }
+    // Adaptive Chained EMA Smoothing
+    float smooth_position = advanced_position;
+    if (cfg.linAdvSmoothTime > 0.0f) {
+      float alpha = 0.0f;
+      float advanced_velocity = (advanced_position - lin_adv.prev_advanced_traj_e) * (FTM_FS);
+      if (cfg.linAdvSmoothTime > 0.01f) {
+        float dv = (advanced_velocity - lin_adv.prev_advanced_e_rate);
+        if (dv < 0.0f) {
+          dv = dv * -1.0f;
+        }
+        lin_adv.prev_volatility = 0.9f * lin_adv.prev_volatility + 0.1f * dv;
+        alpha = (1.0f + lin_adv.prev_volatility) / (10.0f * dv);
+        if (alpha > lin_adv.max_alpha) {
+          alpha = lin_adv.max_alpha;
+        } else if (alpha < 0.0f) {
+          alpha = 0.0f;
+        }
+      } else {
+        alpha = lin_adv.max_alpha;
+      }
+      // Apply smoothing
+      float smooth_val = advanced_position;
+      if (alpha > 0.0f) {
+        for (uint8_t _i = 0; _i < FTM_LIN_ADV_SMOOTHING_ORDER; ++_i) {
+          lin_adv.prev_smoothing_traj_es[_i] += (smooth_val - lin_adv.prev_smoothing_traj_es[_i]) * alpha;
+          smooth_val = lin_adv.prev_smoothing_traj_es[_i];
+          alpha = lin_adv.max_alpha;
+        }
+        smooth_position = smooth_val;
+      }
+      // Store values for next iteration
+      lin_adv.prev_raw_traj_e = nominal_position;
+      lin_adv.prev_advanced_e_rate = advanced_velocity;
+      lin_adv.prev_advanced_traj_e = advanced_position;
+    }
+    // Update trajectory
+    traj_coords.e = smooth_position;
 
+    // Add delay
+    max_total_delay += lin_adv.delay_steps;
+    
+    // Nonlinear extrusion support
+    #if ENABLED(NONLINEAR_EXTRUSION)
+      if (stepper.ne.settings.enabled) {
+        const nonlinear_coeff_t &coeff = stepper.ne.settings.coeff;
+        const float multiplier = max(coeff.C, coeff.A * sq(e_rate) + coeff.B * e_rate + coeff.C),
+                    nle_term = traj_e_delta * (multiplier - 1);
+
+        traj_coords.e += nle_term;
+        traj_e += nle_term;
+        startPos.e += nle_term;
+        endPos_prevBlock.e += nle_term;
+      }
+    #endif
   #endif // FTM_HAS_LIN_ADVANCE
 
   // Update shaping parameters if needed.
@@ -544,10 +587,6 @@ xyze_float_t FTMotion::calc_traj_point(const float dist) {
     default: break;
   }
 
-  #if ANY(FTM_SMOOTHING, HAS_FTM_SHAPING)
-    uint32_t max_total_delay = 0;
-  #endif
-
   #if ENABLED(FTM_SMOOTHING)
 
     // Approximate Gaussian smoothing via chained EMAs
@@ -575,9 +614,12 @@ xyze_float_t FTMotion::calc_traj_point(const float dist) {
       max_total_delay += shaping.largest_delay_samples;
 
     // Apply shaping if active on each axis
-    auto _shape = [&](const AxisEnum axis, axis_shaping_t &shap OPTARG(FTM_SMOOTHING, const axis_smoothing_t &smoo)) {
+    auto _shape = [&](const AxisEnum axis, axis_shaping_t &shap 
+      OPTARG(FTM_SMOOTHING, const axis_smoothing_t &smoo) 
+      OPTARG(FTM_HAS_LIN_ADVANCE, const uint32_t la_delay_steps))
+      {
       const uint32_t group_delay = ftMotion.cfg.axis_sync_enabled
-          ? max_total_delay - TERN0(FTM_SMOOTHING, smoo.delay_samples)
+          ? max_total_delay - TERN0(FTM_SMOOTHING, smoo.delay_samples) - TERN0(FTM_HAS_LIN_ADVANCE, la_delay_steps)
           : -shap.Ni[0];
       //
       // α = 1 − exp(−(dt / (τ / order)))
@@ -594,7 +636,7 @@ xyze_float_t FTMotion::calc_traj_point(const float dist) {
       }
     };
 
-    #define _SHAPE(A) _shape(_AXIS(A), shaping.A OPTARG(FTM_SMOOTHING, smoothing.A));
+    #define _SHAPE(A) _shape(_AXIS(A), shaping.A OPTARG(FTM_SMOOTHING, smoothing.A) OPTARG(FTM_HAS_LIN_ADVANCE, lin_adv.get_delay_steps(#A[0])));
     SHAPED_MAP(_SHAPE);
 
     if (++shaping.zi_idx == ftm_zmax) shaping.zi_idx = 0;

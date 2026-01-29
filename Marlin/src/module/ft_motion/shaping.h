@@ -108,7 +108,9 @@ constexpr float ftm_shaping_max_i = _MAX(0.0f
 // Max delays for smoothing
 constexpr uint32_t ftm_smooth_max_i = uint32_t(TERN0(FTM_SMOOTHING, CEIL(FTM_FS * FTM_MAX_SMOOTHING_TIME)));
 
-constexpr size_t ftm_zmax = ftm_shaping_max_i + ftm_smooth_max_i;
+constexpr uint32_t ftm_lin_adv_i = TERN0(FTM_HAS_LIN_ADVANCE, FTM_LIN_ADV_DELAY_STEPS);
+
+constexpr size_t ftm_zmax = ftm_shaping_max_i + ftm_smooth_max_i + ftm_lin_adv_i;
 
 constexpr uint8_t ftm_shaping_ni_size = _MAX(1
   OPTARG(FTM_SHAPER_ZV,    2)  OPTARG(FTM_SHAPER_EI,   3)
