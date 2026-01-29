@@ -519,10 +519,11 @@ xyze_float_t FTMotion::calc_traj_point(const float dist) {
         smooth_position = smooth_val;
       }
       // Store values for next iteration
-      lin_adv.prev_raw_traj_e = nominal_position;
       lin_adv.prev_advanced_e_rate = advanced_velocity;
       lin_adv.prev_advanced_traj_e = advanced_position;
     }
+    lin_adv.prev_raw_traj_e = nominal_position;
+    
     // Update trajectory
     traj_coords.e = smooth_position;
 
