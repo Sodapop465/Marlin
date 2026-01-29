@@ -49,13 +49,23 @@ constexpr uint32_t FP_FLOOR_MASK = ~(ONE_FP - 1);         // Bit mask to do FLOO
 constexpr uint32_t FRAME_TICKS_FP = FRAME_TICKS << FTM_Q; // Ticks in a frame in fixed point
 constexpr uint32_t FTM_NEVER = FRAME_TICKS_FP + 1;        // Reserved number to indicate "no ticks in this frame", also max isr wait on empty stepper buffer
 
-// Step+Direction+Step (SDS) filter (prevents rapid step+direction+step sequences that can shutdown TMC2208 in standalone mode)
-#if HAS_TRINAMIC_STANDALONE
-  constexpr float SDS_FILTER_TIME = 0.000750f; // seconds
-  constexpr uint32_t SDS_FILTER_TICKS = uint32_t(SDS_FILTER_TIME * STEPPER_TIMER_RATE);
-  constexpr uint32_t SDS_FILTER_TICKS_FP = SDS_FILTER_TICKS << FTM_Q; // Time to wait after a direction change before stepping in fixed point
+// Step+Direction+Step Delay
+#if HAS_FTM_DIR_CHANGE_HOLD
+  constexpr float SDS_DELAY_TIME = 0.000'750f; // Seconds
+  constexpr uint32_t SDS_DELAY_TICKS = uint32_t(SDS_DELAY_TIME * STEPPER_TIMER_RATE); // Ticks to wait after a direction change
+  constexpr uint16_t SDS_DELAY_FRAMES = (SDS_DELAY_TICKS + FRAME_TICKS - 1) / FRAME_TICKS; // Frames to delay after a direction change
+  constexpr uint32_t SDS_DELAY_TICKS_FP = SDS_DELAY_TICKS << FTM_Q; // Ticks to wait after a direction change in fixed point
+  constexpr uint32_t SDS_FINAL_DELAY_TICKS_FP = uint32_t(SDS_DELAY_TICKS - (SDS_DELAY_FRAMES - 1) * FRAME_TICKS) << FTM_Q; // Ticks to wait after a direction change on the final delayed frame in fixed point
+  constexpr bool axis_has_sds(const AxisEnum A) {
+    switch (A) {
+      case X_AXIS: return ENABLED(FTM_DIR_CHANGE_HOLD_X);
+      case Y_AXIS: return ENABLED(FTM_DIR_CHANGE_HOLD_Y);
+      case Z_AXIS: return ENABLED(FTM_DIR_CHANGE_HOLD_Z);
+      case E_AXIS: return ENABLED(FTM_DIR_CHANGE_HOLD_E);
+      default:     return false;
+  }
+}
 #endif
-
 
 // Sanity check
 static_assert(FRAME_TICKS < FTM_NEVER, "(STEPPER_TIMER_RATE / FTM_FS) (" STRINGIFY(STEPPER_TIMER_RATE) " / " STRINGIFY(FTM_FS) ") must be < " STRINGIFY(FTM_NEVER) " to fit 16-bit fixed-point numbers.");
@@ -167,9 +177,10 @@ typedef struct Stepping {
   uint32_t stepper_plan_tail = 0, stepper_plan_head = 0;
   XYZEval<int64_t> curr_steps_q48_16{0};
 
-  // SDS Filter
-  #if HAS_TRINAMIC_STANDALONE
-    AxisBits prev_dir = 0;
+  #if HAS_FTM_DIR_CHANGE_HOLD
+    AxisBits prev_dir;
+    XYZEval<uint16_t> lost_steps_SDS; // Lost steps to add after SDS delay
+    XYZEval<uint16_t> frames_delayed_SDS; // Frames delayed counter
   #endif
 
   FORCE_INLINE void enqueue(XYZEval<int64_t> next_steps_q48_16) {
@@ -202,7 +213,7 @@ typedef struct Stepping {
       const uint32_t carry = curr_phase_q1_16 > next_phase_q1_16;
 
       // steps_to_make = integer steps + potential fraction crossing an integer
-      const uint16_t steps_to_make = (delta_q16_16 >> 16) + carry;
+      uint16_t steps_to_make = (delta_q16_16 >> 16) + carry;
 
       if (steps_to_make == 0) {                // No steps on this axis
         stepper_plan.first_interval_fp[A] = FTM_NEVER;
@@ -217,6 +228,20 @@ typedef struct Stepping {
                       current_frame_phase_fp = a_times_b_shift_16(interval_fp, curr_phase_q1_16);
       uint32_t first_interval_fp = interval_fp - current_frame_phase_fp;
 
+      // Add any lost steps from previous frames due to SDS delay
+      #if HAS_FTM_DIR_CHANGE_HOLD
+        if (axis_has_sds(A) && lost_steps_SDS[A] > 0) {
+          steps_to_make += lost_steps_SDS[A];
+          if (first_interval_fp > FRAME_TICKS_FP) {
+            interval_fp = FRAME_TICKS_FP / (steps_to_make);
+            first_interval_fp = interval_fp;
+          } else {
+            interval_fp = (FRAME_TICKS_FP - first_interval_fp) / (steps_to_make - 1);
+          }
+          lost_steps_SDS[A] = 0;
+        }
+      #endif // HAS_FTM_DIR_CHANGE_HOLD
+
       // The calculation of interval_fp may undershoot its value by a fraction
       // due to integer (floor) division. This small fractional error can
       // occasionally make a spurious step fit inside this frame.
@@ -227,23 +252,44 @@ typedef struct Stepping {
         first_interval_fp += FRAME_TICKS_FP - tick_of_spurious_step_fp + 1;
       }
 
-      // SDS Filter
+      // Step+Direction+Step(SDS) Delay for TMC2208 stepper drivers
       // If direction is going to change, ensure direction change signal doesn't occur too close to the previous step
-      // This can trip the overcurrent protection on the TMC2208 and similar drivers
-      #if HAS_TRINAMIC_STANDALONE
-        // Ensure first step is delayed enough after a direction change
-        if (prev_dir[A] != new_dir && first_interval_fp < SDS_FILTER_TICKS_FP) {
-          const uint32_t extra_delay_fp = SDS_FILTER_TICKS_FP - first_interval_fp;
-          first_interval_fp += extra_delay_fp;
-          // Delay may cause subsequent steps to go out of frame, so shorten interval accordingly
-          const uint32_t ticks_final_step_fp = first_interval_fp + interval_fp * (steps_to_make - 1); // tick of final step in frame
-          if (ticks_final_step_fp > FRAME_TICKS_FP && steps_to_make > 1 && first_interval_fp < FRAME_TICKS_FP) {
-            const uint32_t reduced_frame_ticks_fp = FRAME_TICKS_FP - first_interval_fp;
-            interval_fp = reduced_frame_ticks_fp / (steps_to_make - 1);
+      // This may trip the overcurrent protection on the TMC2208 and similar drivers in StealthChop or Standalone mode
+      #if HAS_FTM_DIR_CHANGE_HOLD
+        // Check if axis needs delay
+        if (axis_has_sds(A) && prev_dir[A] != new_dir) {
+          // Determine delay ticks for this frame
+          uint32_t delay_ticks_fp = SDS_DELAY_TICKS_FP;
+          if (SDS_DELAY_FRAMES - frames_delayed_SDS[A] == 1) {
+            delay_ticks_fp = SDS_FINAL_DELAY_TICKS_FP;
+            frames_delayed_SDS[A] = 0;
+          } else {
+            frames_delayed_SDS[A]++;
+          }
+          if (delay_ticks_fp >> FTM_Q == FRAME_TICKS) delay_ticks_fp = FTM_NEVER; // edge case where delay lines up with end of frame
+          
+          // Apply delay if needed
+          if (first_interval_fp < delay_ticks_fp) {          
+            first_interval_fp = delay_ticks_fp;
+            
+            // Delay may cause subsequent steps to go out of frame, so add lost steps to next frame
+            const uint32_t ticks_final_step_fp = first_interval_fp + interval_fp * (steps_to_make - 1);
+            if (ticks_final_step_fp > FRAME_TICKS_FP) {
+              uint32_t ticks_to_frame_end_fp = ticks_final_step_fp - FRAME_TICKS_FP;
+              uint32_t lost_steps = (ticks_to_frame_end_fp + interval_fp - 1) / interval_fp;
+              if (first_interval_fp > FRAME_TICKS_FP) { 
+                lost_steps = steps_to_make;
+              }
+              lost_steps_SDS[A] += lost_steps;
+            }
+          }
+
+          // Update previous direction after delay
+          if (frames_delayed_SDS[A] == 0) {
+            prev_dir[A] = new_dir;
           }
         }
-        prev_dir[A] = new_dir;
-      #endif
+      #endif // HAS_FTM_DIR_CHANGE_HOLD
 
       stepper_plan.first_interval_fp[A] = _MIN(first_interval_fp, FTM_NEVER);
       stepper_plan.interval_fp[A]       = _MIN(interval_fp, FTM_NEVER);

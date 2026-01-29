@@ -75,10 +75,6 @@ xyze_pos_t   FTMotion::startPos,                    // (mm) Start position of bl
 xyze_float_t FTMotion::ratio;                       // (ratio) Axis move ratio of block
 float FTMotion::tau = 0.0f;                         // (s) Time since start of block
 bool FTMotion::fastForwardUntilMotion = false;      // Fast forward time if there is no motion
-#if HAS_FTM_DIR_CHANGE_HOLD
-  xyze_uint_t FTMotion::hold_frames;                // Briefly hold motion after direction changes to fix TMC2208 bug
-  AxisBits FTMotion::last_traj_dir;                 // Direction of the last trajectory point after shaping, smoothing, ...
-#endif
 
 // Trajectory generators
 TrapezoidalTrajectoryGenerator FTMotion::trapezoidalGenerator;
@@ -250,10 +246,6 @@ void FTMotion::reset() {
 
   moving_axis_flags.reset();
   last_target_traj.reset();
-  #if HAS_FTM_DIR_CHANGE_HOLD
-    last_traj_dir.reset();
-    hold_frames.reset();
-  #endif
   if (did_suspend) stepper.wake_up();
 }
 
@@ -689,36 +681,6 @@ void FTMotion::fill_stepper_plan_buffer() {
       // It eliminates idle time when changing smoothing time or shapers and speeds up homing and bed leveling.
     }
     else {
-
-      #if HAS_FTM_DIR_CHANGE_HOLD
-
-        // When a flip is detected (and the axis is in stealthChop or is standalone),
-        // hold that axis' trajectory coordinate constant for at least 750µs.
-
-        #define DIR_FLIP_HOLD_S 0.000'750f
-        static constexpr uint32_t dir_flip_hold_frames = 1 + (DIR_FLIP_HOLD_S) / (FTM_TS);
-
-        auto start_hold_if_dir_flip = [&](const AxisEnum a) {
-          const bool dir = traj_coords[a] > last_target_traj[a],
-                     moved = traj_coords[a] != last_target_traj[a],
-                     flipped = moved && (dir != last_traj_dir[a]),
-                     hold = !moved || (flipped && hold_frames[a] > 0);
-          if (hold) {
-            if (hold_frames[a]) hold_frames[a]--;
-            traj_coords[a] = last_target_traj[a];
-          }
-          else {
-            last_traj_dir[a] = dir;
-            hold_frames[a] = dir_flip_hold_frames;
-          }
-        };
-
-        #define START_HOLD_IF_DIR_FLIP(A) TERN_(FTM_DIR_CHANGE_HOLD_##A, start_hold_if_dir_flip(_AXIS(A)));
-
-        LOGICAL_AXIS_MAP(START_HOLD_IF_DIR_FLIP);
-
-      #endif // HAS_FTM_DIR_CHANGE_HOLD
-
       fastForwardUntilMotion = false;
 
       // Calculate and store stepper plan in buffer
