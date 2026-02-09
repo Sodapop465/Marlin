@@ -1219,14 +1219,14 @@
 
   #define FTM_POLYS                             // Disable POLY5/6 to save ~3k of Flash. Preserves TRAPEZOIDAL. // Sodapop465   // Sodapop465
   #if ENABLED(FTM_POLYS)
-    #define FTM_TRAJECTORY_TYPE POLY6     // Block acceleration profile (TRAPEZOIDAL, POLY5, POLY6)   // Sodapop465, default TRAPEZOIDAL
+    #define FTM_TRAJECTORY_TYPE TRAPEZOIDAL     // Block acceleration profile (TRAPEZOIDAL, POLY5, POLY6)
                                                 // TRAPEZOIDAL: Continuous Velocity. Max acceleration is respected.
                                                 // POLY5:       Like POLY6 with 1.5x but uses less CPU.
                                                 // POLY6:       Continuous Acceleration (aka S_CURVE).
                                                 // POLY trajectories not only reduce resonances without rounding corners, but also
                                                 // reduce extruder strain due to linear advance.
 
-    #define FTM_POLY6_ACCELERATION_OVERSHOOT 1.5f // Max acceleration overshoot factor for POLY6 (1.25 to 1.875)  // Sodapop465, deafault 1.875f
+    #define FTM_POLY6_ACCELERATION_OVERSHOOT 1.5f // Max acceleration overshoot factor for POLY6 (1.25 to 1.875)  // Sodapop465, default 1.875f
   #endif
 
   /**

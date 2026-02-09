@@ -1345,7 +1345,7 @@
  * Override with M92 (when enabled below)
  *                                      X, Y, Z [, I [, J [, K...]]], E0 [, E1[, E2...]]
  */
-#define DEFAULT_AXIS_STEPS_PER_UNIT   { 80, 80, 400, 93 }
+#define DEFAULT_AXIS_STEPS_PER_UNIT   { 80, 80, 400, 100 } // Sodapop465 default { 80, 80, 400, 93 }
 
 /**
  * Enable support for M92. Disable to save at least ~530 bytes of flash.
@@ -1370,7 +1370,7 @@
  * Override with M201
  *                                      X, Y, Z [, I [, J [, K...]]], E0 [, E1[, E2...]]
  */
-#define DEFAULT_MAX_ACCELERATION      { 1000, 1000, 100, 1500 } // Sodapop465, default { 500, 500, 100, 1000 }
+#define DEFAULT_MAX_ACCELERATION      { 2000, 2000, 100, 1000 } // Sodapop465, default { 500, 500, 100, 1000 }
 
 //#define LIMITED_MAX_ACCEL_EDITING     // Limit edit via M201 or LCD to DEFAULT_MAX_ACCELERATION * 2
 #if ENABLED(LIMITED_MAX_ACCEL_EDITING)
@@ -1399,10 +1399,10 @@
  */
 #define CLASSIC_JERK
 #if ENABLED(CLASSIC_JERK)
-  #define DEFAULT_XJERK 10.0
-  #define DEFAULT_YJERK 10.0
+  #define DEFAULT_XJERK 5.0
+  #define DEFAULT_YJERK 5.0
   #define DEFAULT_ZJERK  0.3
-  #define DEFAULT_EJERK  10.0 // Sodapop465, I don't think I respect this
+  #define DEFAULT_EJERK  5.0 // Sodapop465, I don't think I respect this
   //#define DEFAULT_IJERK  0.3
   //#define DEFAULT_JJERK  0.3
   //#define DEFAULT_KJERK  0.3
