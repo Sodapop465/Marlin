@@ -349,3 +349,13 @@
   #define UART5_TX_PIN                      PC12  // default uses sdcard SDIO_CK
   #define UART5_RX_PIN                      PD2   // default uses sdcard SDIO_CMD
 #endif
+
+// Sodapop465
+// Added this section for TMC2208 uart control - Requires hardware modification
+#if HAS_TMC_UART
+  #define X_SERIAL_TX_PIN PA13  // Reuse SWDIO 'debug' header pin next to LCD socket
+  #define X_SERIAL_RX_PIN PA13
+  #define Y_SERIAL_TX_PIN PA14  // Reuse SCLK 'debug' header pin next to LCD socket
+  #define Y_SERIAL_RX_PIN PA14
+  #define TMC_BAUD_RATE 19600
+#endif
