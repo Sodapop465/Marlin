@@ -70,7 +70,7 @@
 
 // Choose the name from boards.h that matches your setup
 #ifndef MOTHERBOARD
-  #define MOTHERBOARD BOARD_CREALITY_V4
+  #define MOTHERBOARD BOARD_CREALITY_V422_GD32_MFL  // Creality V4.2.2 MFL (GD32F303RE) // Sodapop465
 #endif
 
 // @section serial
