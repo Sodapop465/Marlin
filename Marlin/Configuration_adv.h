@@ -21,7 +21,7 @@
  */
 #pragma once
 
-#define CONFIG_EXAMPLES_DIR "Creality/Ender-3 V2/CrealityV422/CrealityUI"
+#define CONFIG_EXAMPLES_DIR "Creality/Ender-3 V2/CrealityV422/MarlinUI"
 
 /**
  * Configuration_adv.h
@@ -1617,7 +1617,7 @@
       #define XATC_Z_OFFSETS { 0, 0, 0 }    // Z offsets for X axis sample points
     #endif
 
-  #endif
+  #endif // HAS_BED_PROBE
 
   // Include a page of printer information in the LCD Main Menu
   //#define LCD_INFO_MENU
@@ -1915,19 +1915,19 @@
 
   // SD Card Sorting options
   #if ENABLED(SDCARD_SORT_ALPHA)
-    #define SDSORT_QUICK           true   // Use Quick Sort as a sorting algorithm. Otherwise use Bubble Sort.
-    #define SDSORT_REVERSE         false  // Default to sorting file names in reverse order.
-    #define SDSORT_LIMIT           40     // Maximum number of sorted items (10-256). Costs 27 bytes each.
-    #define SDSORT_FOLDERS        -1      // -1=above  0=none  1=below
-    #define SDSORT_GCODE           false  // Enable G-code M34 to set sorting behaviors: M34 S<-1|0|1> F<-1|0|1>
-    #define SDSORT_USES_STACK      true  // Prefer the stack for pre-sorting to give back some SRAM. (Negated by next 2 options.)
-    #define SDSORT_USES_RAM        false  // Pre-allocate a static array for faster pre-sorting.
+    #define SDSORT_REVERSE     false  // Default to sorting file names in reverse order.
+    #define SDSORT_LIMIT       40     // Maximum number of sorted items (10-256). Costs 27 bytes each.
+    #define SDSORT_FOLDERS     -1     // -1=above  0=none  1=below
+    #define SDSORT_GCODE       false  // Enable G-code M34 to set sorting behaviors: M34 S<-1|0|1> F<-1|0|1>
+    #define SDSORT_USES_RAM    true   // Pre-allocate a static array for faster pre-sorting.
+    #define SDSORT_USES_STACK  false  // Prefer the stack for pre-sorting to give back some SRAM. (Negated by next 2 options.)
     #if ENABLED(SDSORT_USES_RAM)
-      #define SDSORT_CACHE_NAMES   false  // Keep sorted items in RAM longer for speedy performance. Most expensive option.
+      #define SDSORT_CACHE_NAMES true   // Keep sorted items in RAM longer for speedy performance. Most expensive option.
       #if ENABLED(SDSORT_CACHE_NAMES)
-        #define SDSORT_DYNAMIC_RAM false  // Use dynamic allocation (within SD menus). Least expensive option. Set SDSORT_LIMIT before use!
+        #define SDSORT_DYNAMIC_RAM true   // Use dynamic allocation (within SD menus). Least expensive option. Set SDSORT_LIMIT before use!
         #define SDSORT_CACHE_VFATS 2      // Maximum number of 13-byte VFAT entries to use for sorting.
                                           // Note: Only affects SCROLL_LONG_FILENAMES with SDSORT_CACHE_NAMES but not SDSORT_DYNAMIC_RAM.
+      #define SDSORT_QUICK       true   // Use Quick Sort as a sorting algorithm. Otherwise use Bubble Sort.
       #endif
     #endif
   #endif
@@ -2403,7 +2403,7 @@
   #define BABYSTEP_MULTIPLICATOR_Z  1       // (steps or mm) Steps or millimeter distance for each Z babystep
   #define BABYSTEP_MULTIPLICATOR_XY 1       // (steps or mm) Steps or millimeter distance for each XY babystep
 
-  //#define DOUBLECLICK_FOR_Z_BABYSTEPPING  // Double-click on the Status Screen for Z Babystepping.
+  #define DOUBLECLICK_FOR_Z_BABYSTEPPING    // Double-click on the Status Screen for Z Babystepping.
   #if ENABLED(DOUBLECLICK_FOR_Z_BABYSTEPPING)
     #define DOUBLECLICK_MAX_INTERVAL 1250   // (ms) Maximum interval between clicks.
                                             // Note: Extra time may be added to mitigate controller latency.
@@ -2449,7 +2449,7 @@
   #if ENABLED(DISTINCT_E_FACTORS)
     #define ADVANCE_K { 0.22 }    // (mm) Compression length per 1mm/s extruder speed, per extruder. Override with 'M900 T<tool> K<mm>'.
   #else
-    #define ADVANCE_K 0.1        // (mm) Compression length for all extruders. Override with 'M900 K<mm>'. // Sodapop465, default 0.22
+    #define ADVANCE_K 0.22        // (mm) Compression length for all extruders. Override with 'M900 K<mm>'. 
   #endif
   //#define ADVANCE_K_EXTRA       // Add a second linear advance constant, configurable with 'M900 L'.
 #endif
@@ -3613,7 +3613,13 @@
     //#define SPI_ENDSTOPS              // TMC2130, TMC2240, and TMC5160
     //#define IMPROVE_HOMING_RELIABILITY
     //#define SENSORLESS_STALLGUARD_DELAY   0 // (ms) Delay to allow drivers to settle
-  #endif
+
+    #if HAS_MARLINUI_MENU
+      // Convenient homing menu items next to Sensorless Homing edit items
+      //#define SENSORLESS_HOMING_TEST_MENU_ITEMS
+    #endif
+
+  #endif // SENSORLESS_HOMING || SENSORLESS_PROBING
 
   // @section tmc/config
 
@@ -4336,10 +4342,10 @@
  * Host Prompt Support enables Marlin to use the host for user prompts so
  * filament runout and other processes can be managed from the host side.
  */
-//#define HOST_ACTION_COMMANDS
+#define HOST_ACTION_COMMANDS
 #if ENABLED(HOST_ACTION_COMMANDS)
   //#define HOST_PAUSE_M76                // Tell the host to pause in response to M76
-  //#define HOST_PROMPT_SUPPORT           // Initiate host prompts to get user feedback
+  #define HOST_PROMPT_SUPPORT             // Initiate host prompts to get user feedback
   #if ENABLED(HOST_PROMPT_SUPPORT)
     //#define HOST_STATUS_NOTIFICATIONS   // Send some status messages to the host as notifications
   #endif
