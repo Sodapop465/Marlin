@@ -1219,20 +1219,20 @@
 
   #define FTM_POLYS                             // Disable POLY5/6 to save ~3k of Flash. Preserves TRAPEZOIDAL. // Sodapop465   // Sodapop465
   #if ENABLED(FTM_POLYS)
-    #define FTM_TRAJECTORY_TYPE TRAPEZOIDAL     // Block acceleration profile (TRAPEZOIDAL, POLY5, POLY6)
+    #define FTM_TRAJECTORY_TYPE POLY6     // Block acceleration profile (TRAPEZOIDAL, POLY5, POLY6)   // Sodapop465, default TRAPEZOIDAL
                                                 // TRAPEZOIDAL: Continuous Velocity. Max acceleration is respected.
                                                 // POLY5:       Like POLY6 with 1.5x but uses less CPU.
                                                 // POLY6:       Continuous Acceleration (aka S_CURVE).
                                                 // POLY trajectories not only reduce resonances without rounding corners, but also
                                                 // reduce extruder strain due to linear advance.
 
-    #define FTM_POLY6_ACCELERATION_OVERSHOOT 1.5f // Max acceleration overshoot factor for POLY6 (1.25 to 1.875)  // Sodapop465, default 1.875f
+    #define FTM_POLY6_ACCELERATION_OVERSHOOT 1.25f // Max acceleration overshoot factor for POLY6 (1.25 to 1.875)  // Sodapop465, default 1.875f
   #endif
 
   /**
    * Advanced configuration
    */
-  #define FTM_BUFFER_SIZE             128   // Window size for trajectory generation, must be a power of 2 (e.g 64, 128, 256, ...)
+  #define FTM_BUFFER_SIZE             256   // Window size for trajectory generation, must be a power of 2 (e.g 64, 128, 256, ...)    // Sodapop465, default 128
                                             // The total buffered time in seconds is (FTM_BUFFER_SIZE/FTM_FS)
   #define FTM_FS                     1000   // (Hz) Frequency for trajectory generation.
   #define FTM_MIN_SHAPE_FREQ           20   // (Hz) Minimum shaping frequency, lower consumes more RAM
@@ -3461,7 +3461,7 @@
    * When disabled, Marlin will use spreadCycle stepping mode.
    */
   #if HAS_STEALTHCHOP
-    // #define STEALTHCHOP_XY // Sodapop465
+    #define STEALTHCHOP_XY
     #define STEALTHCHOP_Z
     #define STEALTHCHOP_I
     #define STEALTHCHOP_J

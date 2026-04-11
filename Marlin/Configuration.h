@@ -735,9 +735,9 @@
     #define DEFAULT_KD_LIST {  78.81,  78.81 }
   #else
     // Ender-3 v2
-    #define DEFAULT_KP  28.72
-    #define DEFAULT_KI   2.62
-    #define DEFAULT_KD  78.81
+    #define DEFAULT_KP  23.51   // Sodapop465
+    #define DEFAULT_KI   1.86   // Sodapop465
+    #define DEFAULT_KD  74.39   // Sodapop465
   #endif
 #else
   #define BANG_MAX 255    // Limit hotend current while in bang-bang mode; 255=full current
@@ -834,9 +834,9 @@
   //#define PID_BED_DEBUG     // Print Bed PID debug data to the serial port. Use 'M303 D' to enable/disable.
 
   // Ender-3 V2
-  #define DEFAULT_BED_KP 462.10
-  #define DEFAULT_BED_KI  85.47
-  #define DEFAULT_BED_KD 624.59
+  #define DEFAULT_BED_KP 200.47
+  #define DEFAULT_BED_KI  38.50
+  #define DEFAULT_BED_KD 695.96
 
   // FIND YOUR OWN: "M303 E-1 C8 S90" to run autotune on the bed at 90 degreesC for 8 cycles.
 #else
